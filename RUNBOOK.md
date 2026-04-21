@@ -56,8 +56,136 @@ terraform init
 terraform apply -auto-approve
 ```
 
+---
+
+### How the VPC was created
+
+A VPC (Virtual Private Cloud) is an isolated network in AWS where all resources live.
+
+```hcl
+resource "aws_vpc" "this" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+}
+```
+
+- CIDR `10.0.0.0/16` gives 65,536 private IP addresses
+- DNS support enabled so pods can resolve hostnames inside the cluster
+
+---
+
+### How the Subnets were created
+
+We created **2 public subnets** across 2 different Availability Zones. EKS requires at least 2 AZs for high availability.
+
+```hcl
+resource "aws_subnet" "public" {
+  count                   = 2
+  vpc_id                  = aws_vpc.this.id
+  cidr_block              = cidrsubnet("10.0.0.0/16", 8, count.index)
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
+}
+```
+
+- Subnet 1: `10.0.0.0/24` in `us-east-1a`
+- Subnet 2: `10.0.1.0/24` in `us-east-1b`
+- `map_public_ip_on_launch = true` — nodes get a public IP automatically
+- Tagged with `kubernetes.io/role/elb = 1` so Kubernetes knows these are public subnets
+
+**Why only public subnets?**
+For simplicity and cost — private subnets require a NAT Gateway (~$32/month). Since this is a short-lived demo, public subnets are sufficient.
+
+---
+
+### How Internet Access was set up
+
+An Internet Gateway (IGW) connects the VPC to the internet:
+
+```hcl
+resource "aws_internet_gateway" "this" {
+  vpc_id = aws_vpc.this.id
+}
+```
+
+A route table sends all outbound traffic (`0.0.0.0/0`) through the IGW:
+
+```hcl
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.this.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.this.id
+  }
+}
+```
+
+Both subnets are associated with this route table so they can reach the internet.
+
+---
+
+### How the EKS Cluster was created
+
+EKS needs an IAM role to manage AWS resources on your behalf:
+
+```hcl
+resource "aws_iam_role" "eks_cluster" {
+  name = "timer-cluster-cluster-role"
+  assume_role_policy = jsonencode({
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "eks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+```
+
+The cluster itself:
+
+```hcl
+resource "aws_eks_cluster" "this" {
+  name     = "timer-cluster"
+  version  = "1.32"
+  role_arn = aws_iam_role.eks_cluster.arn
+  vpc_config {
+    subnet_ids             = aws_subnet.public[*].id
+    endpoint_public_access = true
+  }
+}
+```
+
+- `endpoint_public_access = true` — allows `kubectl` to connect from your laptop
+- Placed in both public subnets for multi-AZ availability
+
+---
+
+### How the Node Group was created
+
+Nodes are EC2 instances that run your pods. They also need an IAM role:
+
+```hcl
+resource "aws_eks_node_group" "this" {
+  cluster_name    = aws_eks_cluster.this.name
+  node_group_name = "timer-cluster-nodes"
+  instance_types  = ["t3.micro"]
+  scaling_config {
+    desired_size = 2
+    min_size     = 1
+    max_size     = 3
+  }
+}
+```
+
+- 2 nodes by default, can scale between 1-3
+- Nodes run in the public subnets and get public IPs
+- IAM policies attached: `AmazonEKSWorkerNodePolicy`, `AmazonEKS_CNI_Policy`, `AmazonEC2ContainerRegistryReadOnly`
+
+---
+
 **Resources created:**
-- VPC `10.0.0.0/16` with 2 public subnets
+- VPC `10.0.0.0/16` with 2 public subnets across 2 AZs
 - Internet Gateway + route tables
 - IAM roles for EKS cluster and nodes
 - EKS cluster `timer-cluster` (Kubernetes 1.32)
