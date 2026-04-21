@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: timer-app
+  labels:
+    app: timer-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: timer-app
+  template:
+    metadata:
+      labels:
+        app: timer-app
+    spec:
+      containers:
+        - name: timer-app
+          image: 031871828395.dkr.ecr.us-east-1.amazonaws.com/timer-app:latest
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"

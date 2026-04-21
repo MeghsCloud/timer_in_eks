@@ -1,0 +1,21 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+.terraform.lock.hcl
+
+# Sensitive
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store
