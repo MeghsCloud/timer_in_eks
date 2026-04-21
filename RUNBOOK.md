@@ -251,6 +251,23 @@ aws ec2 authorize-security-group-ingress \
   --protocol tcp --port 30080 --cidr 0.0.0.0/0
 ```
 
+### Why port 30080?
+
+Kubernetes `NodePort` services must use a port in the range **30000–32767** — this is a hard Kubernetes rule. Ports below 30000 are reserved for system use.
+
+We chose **30080** because:
+- It's in the valid NodePort range (30000–32767)
+- It mirrors port `80` (standard HTTP) making it easy to remember
+- It's not commonly used by other services so no conflicts
+
+The full port flow is:
+```
+User browser → port 30080 (NodePort on EC2 node)
+             → port 8000 (FastAPI app inside the pod)
+```
+
+The app itself runs on port `8000` internally (defined in the Dockerfile), and Kubernetes maps the external NodePort `30080` to it.
+
 ---
 
 ## Step 7 — Get Node IPs
